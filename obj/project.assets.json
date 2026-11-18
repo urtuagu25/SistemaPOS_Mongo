@@ -286,11 +286,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\urtua\\OneDrive\\Desktop\\cursor prueba\\SistemaPOS_Mongo (p)\\BackendPOS\\BackendPOS.csproj",
+      "projectUniqueName": "C:\\Users\\urtua\\OneDrive\\Desktop\\cursor prueba\\SistemaPOS_Mongo (p)\\BackendPOS.csproj",
       "projectName": "BackendPOS",
-      "projectPath": "C:\\Users\\urtua\\OneDrive\\Desktop\\cursor prueba\\SistemaPOS_Mongo (p)\\BackendPOS\\BackendPOS.csproj",
+      "projectPath": "C:\\Users\\urtua\\OneDrive\\Desktop\\cursor prueba\\SistemaPOS_Mongo (p)\\BackendPOS.csproj",
       "packagesPath": "C:\\Users\\urtua\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\urtua\\OneDrive\\Desktop\\cursor prueba\\SistemaPOS_Mongo (p)\\BackendPOS\\obj\\",
+      "outputPath": "C:\\Users\\urtua\\OneDrive\\Desktop\\cursor prueba\\SistemaPOS_Mongo (p)\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\urtua\\AppData\\Roaming\\NuGet\\NuGet.Config",

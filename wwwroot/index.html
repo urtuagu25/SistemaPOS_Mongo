@@ -395,31 +395,44 @@ let activeAccountId = null;
 let S,cur=null,tab='ped',edit=false,sel=null,mod='ventas',pay={},cat='*',mesasCat='*',delivCat='*',q='',mesasQ='',delivQ='',svg,drag=null,palCat='mesas',palQ='';
 let estModo = 'grafico';
 let salonZoom = 1;
-let AUTH_TOKEN = sessionStorage.getItem('pos_token') || '';
 let sesionMaestra = false;
-let _cerrando = false;
 const RESERVADOS = ['superadmin','rdr2goty'];
 
-function api(url, opts={}){
-  const headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
-  if(AUTH_TOKEN) headers.Authorization = 'Bearer '+AUTH_TOKEN;
-  return fetch(url, Object.assign({}, opts, {headers})).then(async res=>{
-    if(res.status===401 && !url.endsWith('/login') && !url.endsWith('/logout') && !_cerrando){
-      _cerrando = true;
-      AUTH_TOKEN = '';
-      sessionStorage.removeItem('pos_token');
-      cerrarSesion(true);
-      _cerrando = false;
-      toast('La sesión expiró. Volvé a ingresar.');
-    }
-    return res;
-  });
+/* ---------- GESTIÓN LOCAL EN NAVEGADOR (SIN BACKEND C#) ---------- */
+const LS_ACCOUNTS_KEY = 'kedasi_accounts_v1';
+const LS_SESSION_KEY = 'kedasi_session_v1';
+const lsStoreKey = id => 'kedasi_store_v1_' + id;
+
+function initAccounts(){
+  try {
+    const raw = localStorage.getItem(LS_ACCOUNTS_KEY);
+    ACCOUNTS = raw ? JSON.parse(raw) : [];
+  } catch(e) {
+    ACCOUNTS = [];
+  }
+  if(!Array.isArray(ACCOUNTS) || !ACCOUNTS.length){
+    ACCOUNTS = [{
+      id: 'tonys_default',
+      comercio: "Tony's Panchos",
+      rubro: 'Panchería',
+      titular: 'Agustín',
+      cuit: '',
+      tel: '',
+      dir: '',
+      user: 'agustin',
+      pass: '1234',
+      activo: true,
+      ejemplo: true,
+      creado: localDateStr(0)
+    }];
+    saveAccounts();
+  }
 }
-function guardarToken(token){
-  AUTH_TOKEN = token || '';
-  if(AUTH_TOKEN) sessionStorage.setItem('pos_token', AUTH_TOKEN);
-  else sessionStorage.removeItem('pos_token');
+
+function saveAccounts(){
+  localStorage.setItem(LS_ACCOUNTS_KEY, JSON.stringify(ACCOUNTS));
 }
+
 function mapAcc(raw){
   return {
     id: raw.id || raw._id || ('com_' + uid()),
@@ -430,9 +443,12 @@ function mapAcc(raw){
     tel: raw.tel || '',
     dir: raw.dir || '',
     user: raw.user,
-    activo: raw.activo !== false
+    pass: raw.pass || '1234',
+    activo: raw.activo !== false,
+    ejemplo: !!raw.ejemplo
   };
 }
+
 function toggleLoginPwd(){
   const i = $('#lp');
   const ver = i.type === 'password';
@@ -603,31 +619,6 @@ function defS(acc){
   };
 }
 
-/* ---------- INICIALIZACIÓN Y GESTIÓN DE CUENTAS MULTI-COMERCIO (CONECTADO A MONGODB) ---------- */
-async function initAccounts(){
-  try {
-    const res = await api('/api/pos/accounts');
-    if (res.ok) {
-      ACCOUNTS = await res.json();
-    }
-  } catch(e) {
-    console.error('Error cargando cuentas desde MongoDB:', e);
-  }
-  if(!Array.isArray(ACCOUNTS)) ACCOUNTS = [];
-}
-
-async function saveAccounts(){
-  const res = await api('/api/pos/accounts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(ACCOUNTS)
-  });
-  if(!res.ok){
-    const j = await res.json().catch(()=>({}));
-    throw new Error(j.error || 'No se pudieron guardar las cuentas');
-  }
-}
-
 function aplicarColoresDinamicos(){
   if(!S || !S.cfg) return;
   const root = document.documentElement;
@@ -635,22 +626,19 @@ function aplicarColoresDinamicos(){
   if(S.cfg.colorSecundario) root.style.setProperty('--mus', S.cfg.colorSecundario);
 }
 
-async function loadStoreForAccount(acc){
+function loadStoreForAccount(acc){
   activeAccountId = acc.id;
   S = null;
   try {
-    const res = await api('/api/pos/store/' + encodeURIComponent(acc.id));
-    if (res.ok) {
-      S = await res.json();
-    }
+    const raw = localStorage.getItem(lsStoreKey(acc.id));
+    if(raw) S = JSON.parse(raw);
   } catch(e) {
-    console.error('Error cargando datos del comercio desde MongoDB:', e);
+    S = null;
   }
   if(!S || typeof S !== 'object' || !S.cfg) S = defS(acc);
 
   S.cfg.nombre = acc.comercio;
   S.cfg.user = acc.user;
-  delete S.cfg.pass;
   if(acc.tel && !S.cfg.tel) S.cfg.tel = acc.tel;
   if(acc.dir && !S.cfg.dir) S.cfg.dir = acc.dir;
 
@@ -679,26 +667,17 @@ async function loadStoreForAccount(acc){
     if(p.abonado===undefined) p.abonado = false;
   });
   S.gseq??=0;S.ing??=[];S.tur??=[];S.turno??=null;
-  await save();
+  save();
 }
 
-let _saveTimer = null;
 function save(){
   if(!activeAccountId || !S) return;
   actualizarAvisos();
-  clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(async () => {
-    try {
-      if(S && S.cfg) delete S.cfg.pass;
-      await api('/api/pos/store/' + encodeURIComponent(activeAccountId), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(S)
-      });
-    } catch(e) {
-      console.error('Error sincronizando comercio con MongoDB:', e);
-    }
-  }, 250);
+  try {
+    localStorage.setItem(lsStoreKey(activeAccountId), JSON.stringify(S));
+  } catch(e) {
+    console.error('Error guardando datos en el navegador:', e);
+  }
 }
 
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove('on'),2400)}
@@ -712,8 +691,8 @@ function keepFocus(id, fn){
 function modal(h, cls){$('#mod').innerHTML=`<div class="mc${cls?' '+cls:''}">${h}</div>`;$('#mod').style.display='grid'}
 function closeM(){$('#mod').style.display='none';$('#mod').innerHTML=''}
 
-async function entrarComercio(acc){
-  await loadStoreForAccount(acc);
+function entrarComercio(acc){
+  loadStoreForAccount(acc);
   $('#login').style.display = 'none';
   $('#admin-app').style.display = 'none';
   $('#app').style.display = 'grid';
@@ -724,14 +703,9 @@ async function entrarComercio(acc){
   go('ventas');
 }
 
-function cerrarSesion(yaExpirada){
-  const token = AUTH_TOKEN;
-  AUTH_TOKEN = '';
+function cerrarSesion(){
   sesionMaestra = false;
-  sessionStorage.removeItem('pos_token');
-  if(!yaExpirada && token){
-    fetch('/api/pos/logout', {method:'POST', headers:{Authorization:'Bearer '+token}}).catch(()=>{});
-  }
+  sessionStorage.removeItem(LS_SESSION_KEY);
   activeAccountId = null;
   S = null;
   cur = null;
@@ -744,75 +718,65 @@ function cerrarSesion(yaExpirada){
   if($('#le')) $('#le').textContent = '';
 }
 
-/* ---------- LOGIN UNIFICADO (SUPERADMIN VS COMERCIOS) ---------- */
-async function login(e){
+/* ---------- LOGIN UNIFICADO (SUPERADMIN VS COMERCIOS EN LOCALSTORAGE) ---------- */
+function login(e){
   e.preventDefault();
   const u = $('#lu').value.trim();
   const p = $('#lp').value;
-  const btn = $('#login-btn');
   $('#le').textContent = '';
-  if(btn){ btn.disabled = true; btn.textContent = 'Verificando…'; }
+  initAccounts();
 
+  // Acceso Superadmin Maestro
+  if (RESERVADOS.includes(u.toLowerCase()) && (p === 'admin' || p === '1234')) {
+    sesionMaestra = true;
+    sessionStorage.setItem(LS_SESSION_KEY, JSON.stringify({ isSuperAdmin: true }));
+    $('#login').style.display = 'none';
+    $('#app').style.display = 'none';
+    $('#admin-app').style.display = 'flex';
+    renderAdminPanel();
+    return;
+  }
+
+  // Acceso Comercios registrados
+  const acc = ACCOUNTS.find(a => a.user.toLowerCase() === u.toLowerCase() && a.pass === p);
+  if (!acc) {
+    $('#le').textContent = 'Usuario o contraseña incorrectos.';
+    return;
+  }
+  if (!acc.activo) {
+    $('#le').textContent = 'Esta cuenta se encuentra suspendida por el administrador.';
+    return;
+  }
+
+  sesionMaestra = false;
+  sessionStorage.setItem(LS_SESSION_KEY, JSON.stringify({ isSuperAdmin: false, accountId: acc.id }));
+  entrarComercio(mapAcc(acc));
+}
+
+function restaurarSesion(){
+  initAccounts();
+  const raw = sessionStorage.getItem(LS_SESSION_KEY);
+  if(!raw) return;
   try {
-    const respuesta = await fetch('/api/pos/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user: u, pass: p })
-    });
-
-    const resultado = await respuesta.json().catch(()=>({}));
-
-    if (!respuesta.ok) {
-      $('#le').textContent = resultado.error || 'Usuario o contraseña incorrectos.';
-      return;
-    }
-
-    guardarToken(resultado.token);
-    sesionMaestra = !!resultado.isSuperAdmin;
-
-    if (resultado.isSuperAdmin) {
-      await initAccounts();
-      $('#login').style.display = 'none';
-      $('#app').style.display = 'none';
-      $('#admin-app').style.display = 'flex';
-      renderAdminPanel();
-      return;
-    }
-
-    if (resultado.success && resultado.account) {
-      await entrarComercio(mapAcc(resultado.account));
-    }
-  } catch (error) {
-    console.error("Error al conectar con el servidor:", error);
-    $('#le').textContent = 'No se pudo conectar con el servidor local.';
-  } finally {
-    if(btn){ btn.disabled = false; btn.textContent = 'Ingresar'; }
-  }
-}
-
-async function restaurarSesion(){
-  if(!AUTH_TOKEN) return;
-  try{
-    const res = await api('/api/pos/session');
-    if(!res.ok) return;
-    const r = await res.json();
-    if(r.isSuperAdmin){
+    const ses = JSON.parse(raw);
+    if(ses.isSuperAdmin){
       sesionMaestra = true;
-      await initAccounts();
       $('#login').style.display = 'none';
       $('#app').style.display = 'none';
       $('#admin-app').style.display = 'flex';
       renderAdminPanel();
       return;
     }
-    if(r.account){
-      sesionMaestra = false;
-      await entrarComercio(mapAcc(r.account));
+    if(ses.accountId){
+      const acc = ACCOUNTS.find(a => a.id === ses.accountId && a.activo);
+      if(acc){
+        sesionMaestra = false;
+        entrarComercio(mapAcc(acc));
+      }
     }
-  }catch(e){
-    console.error(e);
-  }
+  } catch(e) {}
 }
+
 /* ---------- MÓDULO ÚNICO DE ADMINISTRACIÓN (SUPERADMIN) ---------- */
 let admSearch = '', admRubro = '*', showPwdMap = {};
 
@@ -834,7 +798,7 @@ function renderAdminPanel(){
     <div class="bar">
       <div>
         <h2 style="margin:0;color:#0f172a">Cuentas y Comercios Administrados</h2>
-        <p class="mut" style="font-size:12px">Cada negocio entra con su usuario, su stock y su caja. La contraseña se guarda cifrada y no se vuelve a mostrar.</p>
+        <p class="mut" style="font-size:12px">Cada negocio entra con su usuario, su stock y su caja guardados en este navegador.</p>
       </div>
       <button class="b p" onclick="admForm()"><i class="fa-solid fa-plus"></i> Crear nueva cuenta POS</button>
     </div>
@@ -868,6 +832,7 @@ function renderAdminPanel(){
         </thead>
         <tbody>
           ${filtrados.map(a => {
+            const verClave = !!showPwdMap[a.id];
             return `<tr>
               <td>
                 <b style="font-size:12.5px;color:var(--ket)">${esc(a.comercio)}</b><br>
@@ -883,7 +848,10 @@ function renderAdminPanel(){
               </td>
               <td><small class="mut">${esc(a.creado||'—')}</small></td>
               <td>
-                <div class="pwd-box"><i class="fa-solid fa-lock"></i> Protegida</div>
+                <div class="pwd-box">
+                  <span>${verClave ? esc(a.pass) : '••••••'}</span>
+                  <button type="button" onclick="showPwdMap['${a.id}']=!showPwdMap['${a.id}'];renderAdminPanel()" title="Mostrar/Ocultar"><i class="fa-solid ${verClave?'fa-eye-slash':'fa-eye'}"></i></button>
+                </div>
               </td>
               <td>
                 <span class="tag ${a.activo?'m':'lo'}">${a.activo?'Activo':'Suspendido'}</span>
@@ -932,7 +900,7 @@ function admForm(id){
       <h4 style="margin-top:14px;color:var(--ket)">2. Credenciales de Acceso al POS</h4>
       <div class="g2">
         <label>Usuario de ingreso *<input id="adm-usr" value="${esc(a.user)}" placeholder="usuario_local"></label>
-        <label>${id ? 'Nueva contraseña (vacío = no cambiar)' : 'Contraseña *'}<input id="adm-pwd" type="password" value="" autocomplete="new-password" placeholder="${id ? 'Dejar vacío para conservar la actual' : 'Mínimo 4 caracteres'}"></label>
+        <label>${id ? 'Nueva contraseña (vacío = no cambiar)' : 'Contraseña *'}<input id="adm-pwd" type="text" value="" autocomplete="new-password" placeholder="${id ? 'Dejar vacío para conservar la actual' : 'Mínimo 4 caracteres'}"></label>
       </div>
       <label style="margin-top:8px">Estado de la cuenta
         <select id="adm-act">
@@ -955,7 +923,7 @@ function admForm(id){
   `, 'wide');
 }
 
-async function admSave(id){
+function admSave(id){
   const comercio = $('#adm-com').value.trim();
   const rubro = ($('#adm-rub2') && $('#adm-rub2').value.trim()) || $('#adm-rub').value.trim() || 'Gastronomía';
   const plantilla = (!id && $('#adm-plantilla')) ? $('#adm-plantilla').value : '';
@@ -975,91 +943,67 @@ async function admSave(id){
   const duplicado = ACCOUNTS.find(x => x.user.toLowerCase() === user.toLowerCase() && x.id !== id);
   if(duplicado) return toast('Ya existe otro comercio con ese nombre de usuario');
 
-  const payload = ACCOUNTS.map(a => ({...a}));
   let storeId = id;
   if(id){
-    const idx = payload.findIndex(x=>x.id===id);
+    const idx = ACCOUNTS.findIndex(x=>x.id===id);
     if(idx === -1) return;
-    const next = {...payload[idx], comercio, rubro, titular, cuit, tel, dir, user, activo};
+    const next = {...ACCOUNTS[idx], comercio, rubro, titular, cuit, tel, dir, user, activo};
     if(pass) next.pass = pass;
-    else delete next.pass;
-    payload[idx] = next;
-  } else {
-    storeId = 'com_' + uid();
-    payload.push({id:storeId, comercio, rubro, titular, cuit, tel, dir, user, pass, activo, creado: localDateStr(0)});
-  }
+    ACCOUNTS[idx] = next;
+    saveAccounts();
 
-  try{
-    const res = await api('/api/pos/accounts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if(!res.ok){
-      const j = await res.json().catch(()=>({}));
-      return toast(j.error || 'No se pudieron guardar las cuentas');
-    }
-    let copiaOk = true;
-    if(!id){
-      let seed = defS({id:storeId, comercio, tel, dir, user, ejemplo: plantilla==='ejemplo'});
-      if(plantilla && plantilla!=='ejemplo'){
-        const rs = await api('/api/pos/store/' + encodeURIComponent(plantilla));
-        if(!rs.ok) copiaOk = false;
-        if(rs.ok){
-          const src = await rs.json();
-          if(src){
-            seed.prod = src.prod || [];
-            seed.stk = src.stk || [];
-            if(src.lay && src.lay.length) seed.lay = src.lay;
-            seed.prv = src.prv || [];
-            if(src.cfg){
-              seed.cfg.pie = src.cfg.pie || seed.cfg.pie;
-              seed.cfg.colorPrimario = src.cfg.colorPrimario || seed.cfg.colorPrimario;
-              seed.cfg.colorSecundario = src.cfg.colorSecundario || seed.cfg.colorSecundario;
-              seed.cfg.kdsActivo = src.cfg.kdsActivo !== false;
-              seed.cfg.auto = src.cfg.auto !== false;
-              seed.cfg.descuentaStock = src.cfg.descuentaStock !== false;
-              seed.cfg.horario = src.cfg.horario || '';
-            }
-            seed.cfg.nombre = comercio;
-            seed.cfg.user = user;
-            seed.cfg.tel = tel || '';
-            seed.cfg.dir = dir || '';
-            delete seed.cfg.pass;
-          }
-        }
-      }
-      await api('/api/pos/store/' + encodeURIComponent(storeId), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(seed)
-      });
-    } else {
-      const rs = await api('/api/pos/store/' + encodeURIComponent(id));
-      if(rs.ok){
-        const st = await rs.json();
+    try {
+      const rawSt = localStorage.getItem(lsStoreKey(id));
+      if(rawSt){
+        const st = JSON.parse(rawSt);
         if(st && st.cfg){
           st.cfg.nombre = comercio;
           st.cfg.user = user;
-          delete st.cfg.pass;
           if(tel) st.cfg.tel = tel;
           if(dir) st.cfg.dir = dir;
-          await api('/api/pos/store/' + encodeURIComponent(id), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(st)
-          });
+          localStorage.setItem(lsStoreKey(id), JSON.stringify(st));
         }
       }
-    }
-    await initAccounts();
+    } catch(e) {}
+
     renderAdminPanel();
-    if(!id){
-      mostrarAlta(comercio, user, pass, storeId);
-      if(!copiaOk) toast('El negocio se creó vacío: no pude copiar el local elegido');
-    } else { closeM(); toast('Datos actualizados'); }
-  }catch(e){
-    toast('No se pudo guardar la cuenta');
+    closeM();
+    toast('Datos actualizados');
+  } else {
+    storeId = 'com_' + uid();
+    const nuevoAcc = {id:storeId, comercio, rubro, titular, cuit, tel, dir, user, pass, activo, ejemplo: plantilla==='ejemplo', creado: localDateStr(0)};
+    ACCOUNTS.push(nuevoAcc);
+    saveAccounts();
+
+    let seed = defS(nuevoAcc);
+    if(plantilla && plantilla!=='ejemplo'){
+      try {
+        const rawSrc = localStorage.getItem(lsStoreKey(plantilla));
+        if(rawSrc){
+          const src = JSON.parse(rawSrc);
+          seed.prod = src.prod || [];
+          seed.stk = src.stk || [];
+          if(src.lay && src.lay.length) seed.lay = src.lay;
+          seed.prv = src.prv || [];
+          if(src.cfg){
+            seed.cfg.pie = src.cfg.pie || seed.cfg.pie;
+            seed.cfg.colorPrimario = src.cfg.colorPrimario || seed.cfg.colorPrimario;
+            seed.cfg.colorSecundario = src.cfg.colorSecundario || seed.cfg.colorSecundario;
+            seed.cfg.kdsActivo = src.cfg.kdsActivo !== false;
+            seed.cfg.auto = src.cfg.auto !== false;
+            seed.cfg.descuentaStock = src.cfg.descuentaStock !== false;
+            seed.cfg.horario = src.cfg.horario || '';
+          }
+          seed.cfg.nombre = comercio;
+          seed.cfg.user = user;
+          seed.cfg.tel = tel || '';
+          seed.cfg.dir = dir || '';
+        }
+      } catch(e) {}
+    }
+    localStorage.setItem(lsStoreKey(storeId), JSON.stringify(seed));
+    renderAdminPanel();
+    mostrarAlta(comercio, user, pass, storeId);
   }
 }
 
@@ -1073,7 +1017,6 @@ function mostrarAlta(comercio, user, pass, storeId){
         <p>Usuario: <b style="font-family:monospace">${esc(user)}</b></p>
         <p style="margin-top:4px">Contraseña: <b style="font-family:monospace">${esc(pass)}</b></p>
       </div>
-      <p class="mut" style="margin-top:8px">Anotala ahora. Después queda cifrada y esta pantalla no se vuelve a abrir.</p>
     </div>
     <div class="mf">
       <button class="b g" onclick="copiarAlta()">Copiar acceso</button>
@@ -1090,49 +1033,36 @@ function copiarAlta(){
 function copiarUsuario(user){
   navigator.clipboard.writeText(user).then(()=>toast('Usuario copiado')).catch(()=>toast('No se pudo copiar'));
 }
-async function entrarAlta(){
+function entrarAlta(){
   const a = window._altaPOS;
   const acc = a && ACCOUNTS.find(x=>x.id===a.storeId);
   closeM();
-  if(acc) await entrarComercio(acc);
+  if(acc) entrarComercio(mapAcc(acc));
 }
 
-async function admToggleEstado(id){
+function admToggleEstado(id){
   const a = ACCOUNTS.find(x=>x.id===id);
   if(!a) return;
-  const prev = a.activo;
   a.activo = !a.activo;
-  try{
-    await saveAccounts();
-    renderAdminPanel();
-    toast(a.activo ? 'Cuenta reactivada' : 'Cuenta suspendida');
-  }catch(e){
-    a.activo = prev;
-    renderAdminPanel();
-    toast(e.message || 'No se pudo cambiar el estado');
-  }
+  saveAccounts();
+  renderAdminPanel();
+  toast(a.activo ? 'Cuenta reactivada' : 'Cuenta suspendida');
 }
 
-async function admDel(id){
+function admDel(id){
   const a = ACCOUNTS.find(x=>x.id===id);
   if(!a) return;
   if(!confirm(`¿Eliminar definitivamente la cuenta de "${a.comercio}" y todos sus datos?`)) return;
-  const prev = ACCOUNTS.slice();
   ACCOUNTS = ACCOUNTS.filter(x=>x.id!==id);
-  try{
-    await saveAccounts();
-    await api('/api/pos/store/' + encodeURIComponent(id), {method:'DELETE'});
-    toast('Cuenta eliminada');
-  }catch(e){
-    ACCOUNTS = prev;
-    toast(e.message || 'No se pudo eliminar la cuenta');
-  }
+  saveAccounts();
+  localStorage.removeItem(lsStoreKey(id));
+  toast('Cuenta eliminada');
   renderAdminPanel();
 }
 
 function admEntrar(id){
   const a = ACCOUNTS.find(x=>x.id===id);
-  if(a) entrarComercio(a);
+  if(a) entrarComercio(mapAcc(a));
 }
 
 /* ---------- NAVEGACIÓN Y AVISOS DEL COMERCIO ---------- */
@@ -1156,7 +1086,7 @@ function actualizarAvisos(){
     if(r.fecha === hoyStr){
       avisos.push({tipo:'res', tag:'Reserva Hoy', txt:`${r.hora}hs · ${r.nombre}${r.mesaNombre?' · '+r.mesaNombre:''} (${r.personas}p)`});
     } else if(r.fecha === manStr){
-        avisos.push({tipo:'res', tag:'Reserva Mañana', txt:`${r.hora}hs · ${r.nombre}${r.mesaNombre?' · '+r.mesaNombre:''} (${r.personas}p)`});
+      avisos.push({tipo:'res', tag:'Reserva Mañana', txt:`${r.hora}hs · ${r.nombre}${r.mesaNombre?' · '+r.mesaNombre:''} (${r.personas}p)`});
     }
   });
 
@@ -1233,7 +1163,6 @@ function abrirMesa(id){
   V.ventas();
 }
 
-/* Modal para elegir mesa si se entra directo al catálogo de mesas sin mesa activa */
 function pedirMesaSeleccion(){
   const mesasDisponibles = S.lay.filter(isM);
   if(!mesasDisponibles.length) return alert('No hay mesas configuradas en el salón.');
@@ -1550,6 +1479,7 @@ function calcularVueltoSimple(){
   if(pay.efectivoRecibido !== '' && pay.efectivoRecibido >= c.total){
     const vuelto = pay.efectivoRecibido - c.total;
     vEl.textContent = `Vuelto exacto a entregar: ${money(vuelto)}`;
+    vEl.style.color = 'var(--ok)';
   } else if(pay.efectivoRecibido !== '' && pay.efectivoRecibido < c.total){
     vEl.textContent = `⚠️ El monto recibido es menor al total (${money(c.total - pay.efectivoRecibido)} faltantes)`;
     vEl.style.color = 'var(--ket)';
@@ -1636,7 +1566,6 @@ function ventaDe(p){
   };
 }
 function printComprobante(){printTk({...ventaDe(gp()),tit:'COMPROBANTE'})}
-
 function cobrar(){ cobrarSimple(); }
 
 /* ---------- TICKETS Y COMANDAS ESPECÍFICAS ---------- */
@@ -1650,7 +1579,6 @@ ${o.desc?`<div class="r"><span>Subtotal</span><span>${money(o.sub)}</span></div>
 <div class="r tt"><span>TOTAL</span><span>${money(o.total)}</span></div>${pagoDetalle}
 ${o.nota?`<hr>Nota: ${esc(o.nota)}`:''}<hr><p>${esc(c.pie)}</p></div>`}
 
-/* Comanda de Mesa (Solo productos sin precios) */
 function comandaMesaHTML(p){
   const f=new Date().toLocaleString('es-AR');
   return`<div class="pc">
@@ -1668,7 +1596,6 @@ function comandaMesaHTML(p){
   </div>`;
 }
 
-/* Ticket Mostrador (Para retirar) */
 function mostradorHTML(p){
   const f=new Date().toLocaleString('es-AR');
   const c=calc(p);
@@ -1693,7 +1620,7 @@ function printMostrador(){const p=gp();if(!p||!p.items.length)return toast('El t
 function printPed(){printComandaMesa();}
 function reimp(id){const v=S.ven.find(x=>x.id==id);printTk({...v,tit:'COMPROBANTE'})}
 
-/* ---------- VENTAS: PESTAÑAS (PEDIDOS, SALÓN, MOSTRADOR, MESAS, DELIVERY) ---------- */
+/* ---------- VENTAS: PESTAÑAS ---------- */
 V.ventas=()=>{
   $('#view').innerHTML=`<div class="pos">
     <section class="tk" id="tk"></section>
@@ -1709,7 +1636,6 @@ V.ventas=()=>{
   WS[tab]();
 };
 
-/* PESTAÑAS DE PEDIDOS OPTIMIZADA: ROJO (NO ABONÓ - SOLO COBRAR) Y VERDE (ABONADO - CAMBIAR A NO ABONADO) */
 WS.ped=()=>{
   const abiertos = S.ped.filter(p=>p.items.length || p.tipo!='mesa');
   const noAbonados = abiertos.filter(p=>!p.abonado);
@@ -1797,7 +1723,6 @@ WS.ped=()=>{
   `;
 };
 
-/* PESTAÑA MOSTRADOR (EXCLUYE PRODUCTOS EXCLUSIVOS DE DELIVERY) */
 WS.mostrador=()=>{
   const mostradorProds = S.prod.filter(p => p.deliv !== true);
   const cs=[...new Set(mostradorProds.map(p=>p.cat))];
@@ -1834,7 +1759,6 @@ function mostradorGrid(){
   $('#cg').innerHTML=l.map(p=>renderProductCard(p)).join('')||'<p class="mut" style="padding:10px">No hay productos que coincidan en mostrador.</p>';
 }
 
-/* PESTAÑA MESAS (EXCLUYE PRODUCTOS EXCLUSIVOS DE DELIVERY) */
 WS.mesas=()=>{
   const mesasProds = S.prod.filter(p => p.deliv !== true);
   const cs=[...new Set(mesasProds.map(p=>p.cat))];
@@ -1870,7 +1794,6 @@ function mesasGrid(){
   $('#mcg').innerHTML=l.map(p=>renderProductCard(p, 'mesa')).join('')||'<p class="mut" style="padding:10px">No hay productos que coincidan para mesas.</p>';
 }
 
-/* NUEVA PESTAÑA: DELIVERY (CATÁLOGO EXCLUSIVO DE PRODUCTOS MARCADOS PARA DELIVERY) */
 WS.deliv=()=>{
   const delivProds = S.prod.filter(p => p.deliv === true);
   const cs = [...new Set(delivProds.map(p=>p.cat))];
@@ -2382,7 +2305,7 @@ const sum=(a,k)=>a.reduce((x,y)=>x+(k?y[k]:y),0);
 let imgTmp=null;
 function imgFile(el){const f=el.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{const i=new Image();i.onload=()=>{const k=Math.min(1,600/i.width),c=document.createElement('canvas');c.width=i.width*k;c.height=i.height*k;c.getContext('2d').drawImage(i,0,0,c.width,c.height);imgTmp=c.toDataURL('image/jpeg',.85);$('#p-img').value='';toast('Foto cargada')};i.src=r.result};r.readAsDataURL(f)}
 
-/* ---------- PRODUCTOS (CON EDITOR DE OPCIONES DE PRECIO FIJO Y DELIVERY) ---------- */
+/* ---------- PRODUCTOS ---------- */
 let pq='',pg=0,prodCat='*',recTmp=[],opcsTmp=[];const PP=12;
 V.prod=()=>{$('#view').innerHTML=`<div class="mod"><div class="bar"><h2 style="margin:0">Productos</h2><button class="b p" onclick="prodForm()">+ Nuevo producto</button></div><input id="pqi" type="search" placeholder="Buscar por nombre o categoría…" value="${esc(pq)}" oninput="pq=this.value;pg=0;prodRows()"><div id="pl"></div></div>`;prodRows()};
 
@@ -2458,7 +2381,6 @@ function recAdd(){
 }
 function recDel(idx){recTmp.splice(idx,1);renderRecEditor();}
 
-/* Editor visual de Opciones con Precio Fijo */
 function renderOpcsEditor(){
   const el = $('#opcs-editor');
   if(!el) return;
@@ -3001,7 +2923,7 @@ function ingSave(){
   save(); renderNav(); V.prv(); toast('Ingreso registrado');
 }
 
-/* ---------- ESTADÍSTICAS MEJORADAS (VISTA SIMPLE VS GRÁFICO AVANZADO) ---------- */
+/* ---------- ESTADÍSTICAS MEJORADAS ---------- */
 let per='dia', estTurno='*';
 function desde(){const d=new Date();d.setHours(0,0,0,0);if(per=='sem')d.setDate(d.getDate()-(d.getDay()+6)%7);else if(per=='mes')d.setDate(1);return d.getTime()}
 
@@ -3211,7 +3133,7 @@ function turnoCerrar(){
   S.turno=null;save();renderNav();V.caja();toast('Turno cerrado correctamente');
 }
 
-/* ---------- CONFIGURACIÓN DEL COMERCIO (CON CAMBIO DE COLORES) ---------- */
+/* ---------- CONFIGURACIÓN DEL COMERCIO ---------- */
 V.cfg=()=>{const c=S.cfg;$('#view').innerHTML=`<div class="mod"><h2>Configuración del Local y Apariencia</h2>
 <div class="card">
   <h3 style="margin-top:0">Datos del ticket</h3>
@@ -3229,7 +3151,7 @@ V.cfg=()=>{const c=S.cfg;$('#view').innerHTML=`<div class="mod"><h2>Configuraci�
     <label style="display:flex;gap:6px;align-items:center"><input id="c-kds" type="checkbox" style="width:auto;margin:0" ${c.kdsActivo?'checked':''}> Habilitar envío de comandas a cocina (KDS)</label>
     <label style="display:flex;gap:6px;align-items:center"><input id="c-stk" type="checkbox" style="width:auto;margin:0" ${c.descuentaStock!==false?'checked':''}> Descontar la receta del stock al cobrar</label>
   </div>
-  <p class="mut" style="font-size:11px;margin-top:8px"><i class="fa-solid fa-lock"></i> Usuario asignado: <b>${esc(c.user)}</b>. La contraseña no se guarda en los datos del local.</p>
+  <p class="mut" style="font-size:11px;margin-top:8px"><i class="fa-solid fa-lock"></i> Usuario asignado: <b>${esc(c.user)}</b>.</p>
   <button class="b p" style="margin-top:12px" onclick="cfgSave()">Guardar configuración</button>
   ${!sesionMaestra ? `<h4 style="margin-top:16px">Cambiar mi contraseña</h4><div class="g2"><label>Contraseña actual<input id="pw-actual" type="password" autocomplete="current-password"></label><label>Nueva contraseña<input id="pw-nueva" type="password" autocomplete="new-password"></label></div><label style="margin-top:8px">Repetir nueva<input id="pw-rep" type="password" autocomplete="new-password"></label><button class="b g" style="margin-top:8px" type="button" onclick="cambiarClave()">Actualizar contraseña</button>` : ''}
 </div>
@@ -3260,34 +3182,28 @@ function cfgSave(){
   toast('Configuración guardada y colores aplicados');
 }
 
-async function syncPerfil(){
+function syncPerfil(){
   if(!activeAccountId || !S) return;
-  try{
-    await api('/api/pos/profile', {method:'POST', body: JSON.stringify({
-      id: activeAccountId,
-      comercio: S.cfg.nombre,
-      tel: S.cfg.tel || '',
-      dir: S.cfg.dir || ''
-    })});
-    const acc = ACCOUNTS.find(x=>x.id===activeAccountId);
-    if(acc){
-      acc.comercio = S.cfg.nombre;
-      acc.tel = S.cfg.tel;
-      acc.dir = S.cfg.dir;
-    }
-  }catch(e){}
+  const acc = ACCOUNTS.find(x=>x.id===activeAccountId);
+  if(acc){
+    acc.comercio = S.cfg.nombre;
+    acc.tel = S.cfg.tel || '';
+    acc.dir = S.cfg.dir || '';
+    saveAccounts();
+  }
 }
 
-async function cambiarClave(){
+function cambiarClave(){
   const actual = $('#pw-actual').value;
   const nueva = $('#pw-nueva').value;
   const rep = $('#pw-rep').value;
+  const acc = ACCOUNTS.find(x=>x.id===activeAccountId);
+  if(!acc) return;
+  if(acc.pass !== actual) return toast('La contraseña actual es incorrecta');
   if(nueva.length<4) return toast('La nueva clave necesita al menos 4 caracteres');
   if(nueva!==rep) return toast('La confirmación no coincide');
-  const res = await api('/api/pos/password', {method:'POST', body: JSON.stringify({actual, nueva})});
-  const j = await res.json().catch(()=>({}));
-  if(!res.ok) return toast(j.error || 'No se pudo cambiar la clave');
-  if(j.token) guardarToken(j.token);
+  acc.pass = nueva;
+  saveAccounts();
   $('#pw-actual').value=''; $('#pw-nueva').value=''; $('#pw-rep').value='';
   toast('Contraseña actualizada');
 }
@@ -3307,32 +3223,34 @@ function importarArchivo(el){
       S=data;
       S.cfg=S.cfg||{};
       S.cfg.user=user;
-      delete S.cfg.pass;
       if(!S.kdsListos) S.kdsListos=[];
       if(S.cfg.descuentaStock===undefined) S.cfg.descuentaStock=true;
-      save();
-      renderNav();
-      V.cfg();
+      cur=null;
+      aplicarColoresDinamicos();
+      save(); renderNav(); V.cfg();
       toast('Copia restaurada');
     }catch(e){ toast('No se pudo leer el archivo'); }
   };
   r.readAsText(f);
 }
-function resetPlano(){if(!confirm('Se reemplazará el plano actual.'))return;S.lay=defLay();S.ped=S.ped.filter(p=>p.tipo!='mesa');cur=null;save();if(mod=='ventas'&&tab=='salon')WS.salon();toast('Plano restaurado')}
-async function resetTodo(){
-  if(!confirm('Se borrarán todos los datos de este comercio. ¿Continuar?'))return;
+function resetPlano(){
+  if(!confirm('Se vuelve al plano de ejemplo y se cierran pedidos abiertos en mesas. ¿Seguir?')) return;
+  S.lay=defLay();
+  S.ped=S.ped.filter(p=>p.tipo!=='mesa');
+  cur=null; sel=null;
+  save(); renderNav(); toast('Plano restaurado');
+}
+function resetTodo(){
+  if(!confirm('¿Borrar todas las ventas, productos y configuración de este comercio?')) return;
   const acc = ACCOUNTS.find(x=>x.id===activeAccountId);
-  S = defS(acc);
-  if(S.cfg) delete S.cfg.pass;
-  await api('/api/pos/store/' + encodeURIComponent(activeAccountId), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(S)
-  });
-  location.reload();
+  S=defS(acc);
+  cur=null;
+  aplicarColoresDinamicos();
+  save(); renderNav(); V.cfg(); toast('Datos del comercio reiniciados');
 }
 
-restaurarSesion();
+$('#mod').onclick=e=>{if(e.target.id=='mod')closeM()};
+window.addEventListener('DOMContentLoaded', restaurarSesion);
 </script>
 </body>
 </html>

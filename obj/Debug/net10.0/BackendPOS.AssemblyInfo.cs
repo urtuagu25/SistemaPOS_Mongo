@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("BackendPOS")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+79d20a6d938e19789c3f80fcf5fae3b2998d886d")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+2a81b080ab3552702606be1a830838f47225a618")]
 [assembly: System.Reflection.AssemblyProductAttribute("BackendPOS")]
 [assembly: System.Reflection.AssemblyTitleAttribute("BackendPOS")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
